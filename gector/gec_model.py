@@ -138,11 +138,13 @@ class GecBERTModel(object):
                 prediction = model.forward(**batch)
             predictions.append(prediction)
 
+        assert(len(predictions) == 1)
+        # _convert below appears to be for handling ensemble predictions, but no attention analysis for ensembles
         preds, idx, error_probs = self._convert(predictions)
         t55 = time()
         if self.log:
             print(f"Inference time {t55 - t11}")
-        return preds, idx, error_probs
+        return preds, idx, error_probs, predictions[0]['attentions'].tolist()
 
     def get_token_action(self, token, index, prob, sugg_token):
         """Get lost of suggested actions for token."""
@@ -296,7 +298,7 @@ class GecBERTModel(object):
                      if len(full_batch[i]) < self.min_len]
         pred_ids = [i for i in range(len(full_batch)) if i not in short_ids]
         total_updates = 0
-
+        attention_per_iteration = []
         for n_iter in range(self.iterations):
             orig_batch = [final_batch[i] for i in pred_ids]
 
@@ -304,7 +306,8 @@ class GecBERTModel(object):
 
             if not sequences:
                 break
-            probabilities, idxs, error_probs = self.predict(sequences)
+            probabilities, idxs, error_probs, attentions = self.predict(sequences)
+            attention_per_iteration.append(attentions)
 
             pred_batch = self.postprocess_batch(orig_batch, probabilities,
                                                 idxs, error_probs)
@@ -319,4 +322,4 @@ class GecBERTModel(object):
             if not pred_ids:
                 break
 
-        return final_batch, total_updates
+        return final_batch, total_updates, attention_per_iteration

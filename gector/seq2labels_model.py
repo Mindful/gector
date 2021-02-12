@@ -128,6 +128,7 @@ class Seq2Labels(Model):
 
         """
         encoded_text = self.text_field_embedder(tokens)
+        attention = self.text_field_embedder._token_embedders['bert'].get_last_attentions()
         batch_size, sequence_length, _ = encoded_text.size()
         mask = get_text_field_mask(tokens)
         logits_labels = self.tag_labels_projection_layer(self.predictor_dropout(encoded_text))
@@ -149,7 +150,8 @@ class Seq2Labels(Model):
                        "logits_d_tags": logits_d,
                        "class_probabilities_labels": class_probabilities_labels,
                        "class_probabilities_d_tags": class_probabilities_d,
-                       "max_error_probability": incorr_prob}
+                       "max_error_probability": incorr_prob,
+                       'attentions': attention}
         if labels is not None and d_tags is not None:
             loss_labels = sequence_cross_entropy_with_logits(logits_labels, labels, mask,
                                                              label_smoothing=self.label_smoothing)

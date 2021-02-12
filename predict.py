@@ -12,12 +12,12 @@ def predict_for_file(input_file, output_file, model, batch_size=32):
     for sent in test_data:
         batch.append(sent.split())
         if len(batch) == batch_size:
-            preds, cnt = model.handle_batch(batch)
+            preds, cnt, attention = model.handle_batch(batch)
             predictions.extend(preds)
             cnt_corrections += cnt
             batch = []
     if batch:
-        preds, cnt = model.handle_batch(batch)
+        preds, cnt, attention = model.handle_batch(batch)
         predictions.extend(preds)
         cnt_corrections += cnt
 

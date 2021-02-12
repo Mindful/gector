@@ -26,7 +26,7 @@ class PretrainedBertModel:
         if model_name in cls._cache:
             return PretrainedBertModel._cache[model_name]
 
-        model = AutoModel.from_pretrained(model_name)
+        model = AutoModel.from_pretrained(model_name, output_attentions=True)
         if cache_model:
             cls._cache[model_name] = model
 
@@ -77,6 +77,7 @@ class BertEmbedder(TokenEmbedder):
         self.num_start_tokens = num_start_tokens
         self.num_end_tokens = num_end_tokens
         self._scalar_mix = None
+        self.attentions = None
 
     def set_weights(self, freeze):
         for param in self.bert_model.parameters():
@@ -85,6 +86,11 @@ class BertEmbedder(TokenEmbedder):
 
     def get_output_dim(self) -> int:
         return self.output_dim
+
+    def get_last_attentions(self):
+        result = self.attentions
+        self.attentions = None
+        return result
 
     def forward(
         self,
@@ -125,6 +131,7 @@ class BertEmbedder(TokenEmbedder):
         # that the memory consumption can dramatically increase for large batches with extremely
         # long sentences.
         needs_split = full_seq_len > self.max_pieces
+        assert(needs_split is False)  # Not going to deal with this case for the purposes of attention analysis
         last_window_size = 0
         if needs_split:
             # Split the flattened list by the window size, `max_pieces`
@@ -139,12 +146,15 @@ class BertEmbedder(TokenEmbedder):
             input_ids = torch.cat(split_input_ids, dim=0)
 
         input_mask = (input_ids != 0).long()
+
         # input_ids may have extra dimensions, so we reshape down to 2-d
         # before calling the BERT model and then reshape back at the end.
-        all_encoder_layers = self.bert_model(
+        bert_output = self.bert_model(
             input_ids=util.combine_initial_dims(input_ids),
             attention_mask=util.combine_initial_dims(input_mask),
-        )[0]
+        )
+        all_encoder_layers = bert_output[0]
+        attention = torch.stack(bert_output[2]).transpose(0, 1) #[inputs, layers, attention_heads, tokens_tokens]
         if len(all_encoder_layers[0].shape) == 3:
             all_encoder_layers = torch.stack(all_encoder_layers)
         elif len(all_encoder_layers[0].shape) == 2:
@@ -208,6 +218,7 @@ class BertEmbedder(TokenEmbedder):
         if offsets is None:
             # Resize to (batch_size, d1, ..., dn, sequence_length, embedding_dim)
             dims = initial_dims if needs_split else input_ids.size()
+            self.attentions = attention  # extremely hacky, but no way to pass this up through embedders
             return util.uncombine_initial_dims(mix, dims)
         else:
             # offsets is (batch_size, d1, ..., dn, orig_sequence_length)
@@ -218,6 +229,8 @@ class BertEmbedder(TokenEmbedder):
             ).unsqueeze(1)
             # selected embeddings is also (batch_size * d1 * ... * dn, orig_sequence_length)
             selected_embeddings = mix[range_vector, offsets2d]
+            selected_attention = util.map_attention_with_offsets(attention, offsets2d)
+            self.attentions = selected_attention  # extremely hacky, but no way to pass this up through embedders
 
             return util.uncombine_initial_dims(selected_embeddings, offsets.size())
 
@@ -252,6 +265,7 @@ class PretrainedBertEmbedder(BertEmbedder):
         special_tokens_fix: int = 0,
     ) -> None:
         model = PretrainedBertModel.load(pretrained_model)
+        model.config.output_attentions = True
 
         for param in model.parameters():
             param.requires_grad = requires_grad
