@@ -144,7 +144,7 @@ class GecBERTModel(object):
         t55 = time()
         if self.log:
             print(f"Inference time {t55 - t11}")
-        return preds, idx, error_probs, predictions[0]['attentions'].tolist()
+        return preds, idx, error_probs, predictions[0]['attentions'].numpy()
 
     def get_token_action(self, token, index, prob, sugg_token):
         """Get lost of suggested actions for token."""
