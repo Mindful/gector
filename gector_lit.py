@@ -6,7 +6,7 @@ from lit_nlp.api import dataset as lit_dataset
 from lit_nlp import dev_server
 from lit_nlp import server_flags
 from absl import app
-
+import numpy
 
 class Bea2019Data(lit_dataset.Dataset):
 
@@ -14,11 +14,12 @@ class Bea2019Data(lit_dataset.Dataset):
         with open(path, 'r') as f:
             lines = f.readlines()
 
-        self._examples = [{'original': x.strip()} for x in lines if x.strip()]
+        self._examples = [{'input_text': x.strip(), 'target_text': 'I like dogs.'} for x in lines if x.strip()]
 
     def spec(self) -> lit_types.Spec:
         """Should match MLM's input_spec()."""
-        return {'original': lit_types.TextSegment()}
+        return {'input_text': lit_types.TextSegment(),
+                'target_Text': lit_types.TextSegment()}
 
 
 class GectorBertModel(lit_model.Model):
@@ -43,8 +44,11 @@ class GectorBertModel(lit_model.Model):
         return 32
 
     def predict_minibatch(self, inputs: List, config=None) -> List:
+        # we append '$START' to the beginning of token lists because GECTOR does as well (and this is what BERT
+        # ends up processing. see preprocess() and postprocess_batch() in gec_model
+
         # this breaks down if we have duplicates, but we shouldn't
-        sentence_indices = [(ex["original"], index) for index, ex in enumerate(inputs)]
+        sentence_indices = [(ex["input_text"], index) for index, ex in enumerate(inputs)]
         tokenized_input_with_indices = [(original.split(), index) for original, index in sentence_indices]
         batch = [(tokens, index) for tokens, index in tokenized_input_with_indices
                  if len(tokens) >= self.model.min_len]
@@ -55,37 +59,46 @@ class GectorBertModel(lit_model.Model):
                    if len(tokens) < self.model.min_len]
 
         model_input = [tokens for tokens, index in batch]
-        preds, _, attention = self.model.handle_batch(model_input)
+        predictions, _, attention = self.model.handle_batch(model_input)
         attention = attention[0]  # we only have one iteration
 
-        assert (len(preds) == len(attention))
-        output = [{'tokens': x} for x in preds]
+        assert (len(predictions) == len(attention))
+        output = [{'predicted': ' '.join(tokenlist)} for tokenlist in predictions]
+
+        # wanted to average across heads and layers, but attention with different head counts breaks LIT
+        #attention_averaged = numpy.average(attention, (1, 2))[:, numpy.newaxis, ...]
 
         batch_iter = iter(batch)
         for output_dict, attention_info in zip(output, attention):
             original_tokens, original_index = next(batch_iter)
             output_dict['original_index'] = original_index
-            for layer_index, attention_layer_info in enumerate(attention_info):
-                output_dict['attention_layer{}'.format(layer_index)] = attention_layer_info
+            output_dict['layer_average'] = numpy.average(attention_info, axis=0)
 
-        output.extend({'tokens': tokens, 'original_index': original_index} for tokens, original_index in ignored)
+            for layer_index, attention_layer_info in enumerate(attention_info):
+                output_dict['layer{}'.format(layer_index)] = attention_layer_info
+
+        output.extend({'predicted': ' '.join(tokens), 'original_index': original_index} for tokens, original_index in ignored)
         output.sort(key=lambda x: x['original_index'])
+        for tokenized_input, index in tokenized_input_with_indices:
+            output[index]['input_tokens'] = ['$START'] + tokenized_input
+
         for d in output:
             del d['original_index']
+
         return output
 
     def input_spec(self) -> lit_types.Spec:
         return {
-            "original": lit_types.TextSegment(),
+            "input_text": lit_types.TextSegment(),
+            "target_text": lit_types.TextSegment(required=False)
         }
 
     def output_spec(self) -> lit_types.Spec:
-        output = {
-            "tokens": lit_types.Tokens(),
-        }
-
+        output = {"input_tokens": lit_types.Tokens(parent="input_text"),
+                  "predicted": lit_types.GeneratedText(parent='target_text'),
+                  'layer_average': lit_types.AttentionHeads(align=('input_tokens', 'input_tokens'))}
         for layer in range(self.ATTENTION_LAYERS):
-            output['attention_layer{}'.format(layer)] = lit_types.AttentionHeads(align=('tokens', 'tokens'))
+            output['layer{}'.format(layer)] = lit_types.AttentionHeads(align=('input_tokens', 'input_tokens'))
 
         return output
 

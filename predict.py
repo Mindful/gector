@@ -2,7 +2,7 @@ import argparse
 
 from utils.helpers import read_lines
 from gector.gec_model import GecBERTModel
-
+import numpy
 
 def predict_for_file(input_file, output_file, model, batch_size=32):
     test_data = read_lines(input_file)
