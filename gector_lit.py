@@ -7,14 +7,15 @@ from lit_nlp import dev_server
 from lit_nlp import server_flags
 from absl import app
 import numpy
+import json
 
 class Bea2019Data(lit_dataset.Dataset):
 
     def __init__(self, path):
         with open(path, 'r') as f:
-            lines = f.readlines()
+            lines = json.load(f)
 
-        self._examples = [{'input_text': x.strip(), 'target_text': 'I like dogs.'} for x in lines if x.strip()]
+        self._examples = [{'input_text': x['source_text'], 'target_text': x['target_text']} for x in lines]
 
     def spec(self) -> lit_types.Spec:
         """Should match MLM's input_spec()."""
@@ -90,7 +91,7 @@ class GectorBertModel(lit_model.Model):
     def input_spec(self) -> lit_types.Spec:
         return {
             "input_text": lit_types.TextSegment(),
-            "target_text": lit_types.TextSegment(required=False)
+            "target_text": lit_types.TextSegment()
         }
 
     def output_spec(self) -> lit_types.Spec:
@@ -105,7 +106,7 @@ class GectorBertModel(lit_model.Model):
 
 def main(_):
     models = {"gector": GectorBertModel('bert_0_gector.th')}
-    datasets = {"test_data": Bea2019Data('data/head_test.txt')}
+    datasets = {"test_data": Bea2019Data('data/test.json')}
 
     # Start the LIT server. See server_flags.py for server options.
     lit_demo = dev_server.Server(models, datasets, **server_flags.get_flags())

@@ -1,3 +1,24 @@
+# GECToR + LIT
+
+This fork attaches the BERT GECToR model to the 
+[Language Interpretability Tool](https://github.com/PAIR-code/lit), enabling 
+analysis of various aspects of the model such as attention. 
+
+A couple things to note:
+- The expect input is a JSON file with at minimum these two attributes 
+  `{'source_text': <original text>, 'target_text': <corrected text>`. Both
+  text fields are strings but reflect spaCy/ERRANT tokenization, I.E. 
+  `"I 'm looking forward to seeing you soon ."`
+- Most of the changes to existing code are siply to enable properly 
+  outputting the attention of the BERT encoder component of GECToR.
+- We only fetch attention from the first iteration, so the GECToR model
+  we run for LIT is limited to one iteration.
+- BERT uses wordpiece internally but GECToR processes embeddings per 
+  _token_, so we also display results per token (as opposed to per wordpiece).
+- The presence of the `$START` token in the attention analysis is not 
+  an error - GECToR internally appends this token to all incoming token
+  sequences, so it gets attended to. Feel free to ignore it.
+
 # GECToR – Grammatical Error Correction: Tag, Not Rewrite
 
 This repository provides code for training and testing state-of-the-art models for grammatical error correction with the official PyTorch implementation of the following paper:
