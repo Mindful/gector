@@ -1,30 +1,14 @@
-from lit_nlp.api import model as lit_model
-from typing import Any, List
-from gector.gec_model import GecBERTModel
-from lit_nlp.api import types as lit_types
-from lit_nlp.api import dataset as lit_dataset
-from lit_nlp import dev_server
-from lit_nlp import server_flags
-from absl import app
-import numpy
 import json
+from typing import Any, List
+import numpy
+from lit_nlp.api import model as lit_model, types as lit_types, dataset as lit_dataset
 
-class Bea2019Data(lit_dataset.Dataset):
-
-    def __init__(self, path):
-        with open(path, 'r') as f:
-            lines = json.load(f)
-
-        self._examples = [{'input_text': x['source_text'], 'target_text': x['target_text']} for x in lines]
-
-    def spec(self) -> lit_types.Spec:
-        """Should match MLM's input_spec()."""
-        return {'input_text': lit_types.TextSegment(),
-                'target_Text': lit_types.TextSegment()}
+from gector.gec_model import GecBERTModel
 
 
 class GectorBertModel(lit_model.Model):
     ATTENTION_LAYERS = 12
+    ATTENTION_HEADS = 12
 
     def __init__(self, model_path):
         self.model = GecBERTModel(vocab_path='data/output_vocabulary',
@@ -104,14 +88,44 @@ class GectorBertModel(lit_model.Model):
         return output
 
 
-def main(_):
-    models = {"gector": GectorBertModel('bert_0_gector.th')}
-    datasets = {"test_data": Bea2019Data('data/test.json')}
-
-    # Start the LIT server. See server_flags.py for server options.
-    lit_demo = dev_server.Server(models, datasets, **server_flags.get_flags())
-    lit_demo.serve()
+AGREEMENT_PERSON = 'AGREEMENT_PERSON'
+AGREEMENT_PLURAL = 'AGREEMENT_PLURAL'
+AGREEMENT_TENSE = 'AGREEMENT_TENSE'
+GECE_ERROR_TYPES = {AGREEMENT_PERSON, AGREEMENT_TENSE, AGREEMENT_PLURAL}
 
 
-if __name__ == "__main__":
-    app.run(main)
+class Bea2019Data(lit_dataset.Dataset):
+
+    NONE_TAG = 'O'
+
+    def __init__(self, path, gece_tags=False):
+        with open(path, 'r') as f:
+            lines = json.load(f)
+
+        self._examples = []
+        for jsonline in lines:
+            input_text = jsonline['source_text']
+            result = {'input_text': input_text, 'input_tokens': input_text.split(),
+                      'target_text': jsonline['target_text']}
+
+            if gece_tags and 'markings' in jsonline:
+                markings = jsonline['markings']
+                result['markings'] = markings  # not in the output spec because only used in attention analysis (not LIT)
+                tags = [Bea2019Data.NONE_TAG] * len(input_text)
+                for mark in markings:
+                    mark_type = mark['error_type']
+                    for idx in mark['error_indices']:
+                        tags[idx] = '{}:ERR'.format(mark_type)
+
+                    for idx in mark['cause_indices']:
+                        tags[idx] = '{}:SRC'.format(mark_type)
+                result['gece_tags'] = tags
+
+            self.examples.append(result)
+
+    def spec(self) -> lit_types.Spec:
+        """Should match MLM's input_spec()."""
+        return {'input_text': lit_types.TextSegment(),
+                'target_text': lit_types.TextSegment(),
+                'input_tokens': lit_types.Tokens(required=False),
+                'gece_tags': lit_types.SequenceTags(align='input_tokens', required=False)}

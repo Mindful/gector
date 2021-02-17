@@ -18,6 +18,8 @@ A couple things to note:
 - The presence of the `$START` token in the attention analysis is not 
   an error - GECToR internally appends this token to all incoming token
   sequences, so it gets attended to. Feel free to ignore it.
+- The code in `attention_analysis.py` and in the LIT dataset class relating
+  to gece tags is specific to a separate research project and can be ignored.
 
 # GECToR – Grammatical Error Correction: Tag, Not Rewrite
 
