@@ -8,17 +8,18 @@ from gector.gec_model import GecBERTModel
 class GectorBertModel(lit_model.Model):
     ATTENTION_LAYERS = 12
     ATTENTION_HEADS = 12
+    MAX_LEN = 50
 
     def __init__(self, model_path):
         self.model = GecBERTModel(vocab_path='data/output_vocabulary',
                                   model_paths=[model_path],
-                                  max_len=50,
+                                  max_len=GectorBertModel.MAX_LEN,
                                   min_len=3,
                                   iterations=1,  # limit to 1 iteration to make attention analysis reasonable
                                   min_error_probability=0.0,
                                   model_name='bert',  # we're using BERT
                                   special_tokens_fix=0,  # disabled for BERT
-                                  log=True,
+                                  log=False,
                                   confidence=0,
                                   is_ensemble=0,
                                   weigths=None)
@@ -100,25 +101,34 @@ class Bea2019Data(lit_dataset.Dataset):
     def __init__(self, path, gece_tags=False):
         with jsonlines.open(path) as lines:
             self._examples = []
+            self.unprocessable = []
             for jsonline in lines:
                 input_text = jsonline['source_text']
                 result = {'input_text': input_text, 'input_tokens': input_text.split(),
                           'target_text': jsonline['target_text']}
-
+                unprocessable = False
                 if gece_tags and 'markings' in jsonline:
-                    markings = jsonline['markings']
-                    result['markings'] = markings  # not in the output spec because only used in attention analysis (not LIT)
-                    tags = [Bea2019Data.NONE_TAG] * len(input_text)
-                    for mark in markings:
-                        mark_type = mark['error_type']
-                        for idx in mark['error_indices']:
-                            tags[idx] = '{}:ERR'.format(mark_type)
+                    try:
+                        markings = jsonline['markings']
+                        result['markings'] = markings  # not in the output spec because only used in attention analysis (not LIT)
+                        tags = [Bea2019Data.NONE_TAG] * len(input_text)
+                        for mark in markings:
+                            mark_type = mark['error_type']
+                            for idx in mark['error_indices']:
+                                tags[idx] = '{}:ERR'.format(mark_type)
 
-                        for idx in mark['cause_indices']:
-                            tags[idx] = '{}:SRC'.format(mark_type)
-                    result['gece_tags'] = tags
+                            for idx in mark['cause_indices']:
+                                tags[idx] = '{}:SRC'.format(mark_type)
+                        result['gece_tags'] = tags
+                    except Exception as ex:
+                        self.unprocessable.append(ex)
+                        unprocessable = True
 
-                self.examples.append(result)
+                if not unprocessable:
+                    self.examples.append(result)
+
+        if len(self.unprocessable) > 0:
+            print('SKipped loading {} unprocessable examples'.format(len(self.unprocessable)))
 
     def spec(self) -> lit_types.Spec:
         """Should match MLM's input_spec()."""

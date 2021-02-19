@@ -9,13 +9,11 @@ import numpy as np
 from lit_nlp.api import model as lit_model, dataset as lit_dataset
 from tqdm import tqdm as normal_tqdm
 from tqdm.notebook import tqdm as notebook_tqdm
+from typing import List, Dict
 
 
-# prepended token count is the number of extra tokens added to the front (see: GECToR's $START token)
-def attention_analysis(model: lit_model.Model, data: lit_dataset.Dataset, attention_heads: int, attention_layers: int,
-                       prepended_token_count=1, notebook=True):
-
-    tqdm = notebook_tqdm if notebook else notebook
+def _get_results_from_model(model: lit_model.Model, data: lit_dataset.Dataset, notebook: bool) -> List[Dict]:
+    tqdm = notebook_tqdm if notebook else normal_tqdm
 
     batch_size = model.max_minibatch_size()
     results = []
@@ -23,6 +21,13 @@ def attention_analysis(model: lit_model.Model, data: lit_dataset.Dataset, attent
         batch_examples = data.examples[i:i + batch_size]
         results.extend(model.predict_minibatch(batch_examples))
 
+    return results
+
+
+def _perform_analysis(results: List[Dict], data: lit_dataset.Dataset, attention_heads: int, attention_layers: int,
+                       max_len:int, prepended_token_count: int, notebook: bool):
+
+    tqdm = notebook_tqdm if notebook else normal_tqdm
     total_head_count = attention_heads + 1  # one extra head representing the average
     head_avg_index = attention_heads
 
@@ -37,13 +42,14 @@ def attention_analysis(model: lit_model.Model, data: lit_dataset.Dataset, attent
         input_tokens = input_dict['input_tokens']
         processed_input_tokens = result_dict['input_tokens']
         assert (input_tokens == processed_input_tokens[1:])
-        if len(input_tokens) + 1 >= result_dict[layers[0]].shape[1]:
-            continue  # input was truncated, don't bother with it
+        if layers[0] not in result_dict or len(input_tokens) + 1 >= result_dict[layers[0]].shape[1]:
+            continue  # input was under min length (ignored) or over max length (truncated), don't bother with it
         for marking in input_dict['markings']:
             error_type = marking['error_type']
             labels_relative_to_error = [1 if idx in marking['cause_indices'] else 0 for idx in range(len(input_tokens))]
 
-            for error_token_index in (x+prepended_token_count for x in marking['error_indices']):
+            # ideally the check to make sure  the error marking was inside the sentence tokens wouldn't be necessary...
+            for error_token_index in (x+prepended_token_count for x in marking['error_indices'] if x < len(input_tokens)):
                 error_token_labels[error_type].extend(labels_relative_to_error)
                 for layer in layers:
                     for head_index in range(0, total_head_count - 1):
@@ -114,8 +120,17 @@ def attention_analysis(model: lit_model.Model, data: lit_dataset.Dataset, attent
     return pearson_results, regression_results, argmax_results
 
 
+# prepended token count is the number of extra tokens added to the front (see: GECToR's $START token)
+def attention_analysis(model: lit_model.Model, data: lit_dataset.Dataset, attention_heads: int, attention_layers: int,
+                       max_len: int, prepended_token_count: int = 1, notebook=True):
+
+    results = _get_results_from_model(model, data, notebook)
+    return _perform_analysis(results, data, attention_heads, attention_layers, max_len, prepended_token_count, notebook)
+
+
 if __name__ == '__main__':
     model = GectorBertModel('bert_0_gector.th')
     data = Bea2019Data('data/test.jsonl', gece_tags=True)
-    pearson, regression, argmax = attention_analysis(model, data, model.ATTENTION_HEADS, model.ATTENTION_LAYERS)
+    pearson, regression, argmax = attention_analysis(model, data, model.ATTENTION_HEADS, model.ATTENTION_LAYERS,
+                                                     model.MAX_LEN)
     print('debug')
