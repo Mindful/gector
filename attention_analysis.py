@@ -6,26 +6,34 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score
 import numpy as np
+from lit_nlp.api import model as lit_model, dataset as lit_dataset
+from tqdm import tqdm as normal_tqdm
+from tqdm.notebook import tqdm as notebook_tqdm
 
 
-def main():
-    model = GectorBertModel('bert_0_gector.th')
-    data = Bea2019Data('data/test.jsonl', gece_tags=True)
+# prepended token count is the number of extra tokens added to the front (see: GECToR's $START token)
+def attention_analysis(model: lit_model.Model, data: lit_dataset.Dataset, attention_heads: int, attention_layers: int,
+                       prepended_token_count=1, notebook=True):
+
+    tqdm = notebook_tqdm if notebook else notebook
 
     batch_size = model.max_minibatch_size()
     results = []
-    for i in range(0, len(data), batch_size):
+    for i in tqdm(range(0, len(data), batch_size), desc='processing batches'):
         batch_examples = data.examples[i:i + batch_size]
         results.extend(model.predict_minibatch(batch_examples))
 
-    layers = ['layer{}'.format(x) for x in range(0, model.ATTENTION_LAYERS)] + ['layer_average']
+    total_head_count = attention_heads + 1  # one extra head representing the average
+    head_avg_index = attention_heads
+
+    layers = ['layer{}'.format(x) for x in range(0, attention_layers)] + ['layer_average']
     error_token_labels = {et: [] for et in GECE_ERROR_TYPES}
-    error_token_values = {et: {layer: [[] for x in range(0, model.ATTENTION_LAYERS)] for layer in layers}
+    error_token_values = {et: {layer: [[] for x in range(0, total_head_count)] for layer in layers}
                           for et in GECE_ERROR_TYPES}
-    error_labels_argmax_guess = {et: {layer: [[] for x in range(0, model.ATTENTION_LAYERS)] for layer in layers}
+    error_labels_argmax_guess = {et: {layer: [[] for x in range(0, total_head_count)] for layer in layers}
                                  for et in GECE_ERROR_TYPES}
 
-    for result_dict, input_dict in zip(results, data.examples):
+    for result_dict, input_dict in tqdm(zip(results, data.examples), desc='processing results', total=len(results)):
         input_tokens = input_dict['input_tokens']
         processed_input_tokens = result_dict['input_tokens']
         assert (input_tokens == processed_input_tokens[1:])
@@ -35,17 +43,28 @@ def main():
             error_type = marking['error_type']
             labels_relative_to_error = [1 if idx in marking['cause_indices'] else 0 for idx in range(len(input_tokens))]
 
-            for error_token_index in marking['error_indices']:
+            for error_token_index in (x+prepended_token_count for x in marking['error_indices']):
                 error_token_labels[error_type].extend(labels_relative_to_error)
                 for layer in layers:
-                    for head_index in range(0, model.ATTENTION_HEADS):
+                    for head_index in range(0, total_head_count - 1):
                         attention_for_tokens = result_dict[layer][head_index, error_token_index,
-                                                                 range(1, (len(input_tokens) + 1))]
+                                            range(prepended_token_count, (len(input_tokens) + prepended_token_count))]
                         max_attention_index = np.argmax(attention_for_tokens)
                         argmax_label_guess = [1 if idx == max_attention_index else 0 for idx
                                               in range(len(attention_for_tokens))]
                         error_token_values[error_type][layer][head_index].extend(attention_for_tokens)
                         error_labels_argmax_guess[error_type][layer][head_index].extend(argmax_label_guess)
+
+
+                    attention_for_tokens = np.average(result_dict[layer], axis=0)[error_token_index,
+                                            range(prepended_token_count, (len(input_tokens) + prepended_token_count))]
+                    max_attention_index = np.argmax(attention_for_tokens)
+                    argmax_label_guess = [1 if idx == max_attention_index else 0 for idx
+                                          in range(len(attention_for_tokens))]
+                    error_token_values[error_type][layer][head_avg_index].extend(attention_for_tokens)
+                    error_labels_argmax_guess[error_type][layer][head_avg_index].extend(argmax_label_guess)
+
+
 
     pearson_results = {
         error_type: {
@@ -65,13 +84,12 @@ def main():
         } for error_type in GECE_ERROR_TYPES
     }
 
-    error_significant_seeming = 0
     for error_type in GECE_ERROR_TYPES:
         error_labels = error_token_labels[error_type]
         if len(error_labels) < 10:
             continue  # not enough data to compute anything for this type
         for layer in layers:
-            for head_index in range(0, model.ATTENTION_HEADS):
+            for head_index in range(0, total_head_count):
                 error_values = error_token_values[error_type][layer][head_index]
                 argmax_guesses = error_labels_argmax_guess[error_type][layer][head_index]
                 assert(len(error_labels) == len(error_values))
@@ -92,14 +110,12 @@ def main():
 
                 error_r, error_p_val,  = pearsonr(error_values, error_labels)
                 pearson_results[error_type][layer].append((error_r, error_p_val))
-                if error_p_val < 0.025:
-                    error_significant_seeming += 1
 
-
-
-
-    print('debug')
+    return pearson_results, regression_results, argmax_results
 
 
 if __name__ == '__main__':
-    main()
+    model = GectorBertModel('bert_0_gector.th')
+    data = Bea2019Data('data/test.jsonl', gece_tags=True)
+    pearson, regression, argmax = attention_analysis(model, data, model.ATTENTION_HEADS, model.ATTENTION_LAYERS)
+    print('debug')
