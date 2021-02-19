@@ -1,4 +1,5 @@
 lit-nlp~=0.2
+jsonlines ~= 2.0.0
 torch==1.3.0
 allennlp==0.8.4
 python-Levenshtein==0.12.0
