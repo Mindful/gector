@@ -142,9 +142,9 @@ class GeceProdigyData(GecData):
             self._examples = []
             self.unprocessable = []
             for jsonline in lines:
-                input_text = jsonline['original']
+                input_text = jsonline['text']
                 result = {'input_text': input_text, 'input_tokens': input_text.split(),
-                          'target_text': jsonline['_corrected_form']}
+                          'target_text': jsonline['added']}
                 unprocessable = False
                 if gece_tags and 'relations' in jsonline:
                     try:
