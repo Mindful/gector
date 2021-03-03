@@ -88,13 +88,10 @@ class GectorBertModel(lit_model.Model):
         return output
 
 
-AGREEMENT_PERSON = 'AGREEMENT_PERSON'
-AGREEMENT_PLURAL = 'AGREEMENT_PLURAL'
-AGREEMENT_TENSE = 'AGREEMENT_TENSE'
-GECE_ERROR_TYPES = {AGREEMENT_PERSON, AGREEMENT_TENSE, AGREEMENT_PLURAL}
+GECE_ERROR_TYPES = {'SVA', 'TENSE'}
 
 
-class Bea2019Data(lit_dataset.Dataset):
+class GecData(lit_dataset.Dataset):
 
     NONE_TAG = 'O'
 
@@ -111,7 +108,7 @@ class Bea2019Data(lit_dataset.Dataset):
                     try:
                         markings = jsonline['markings']
                         result['markings'] = markings  # not in the output spec because only used in attention analysis (not LIT)
-                        tags = [Bea2019Data.NONE_TAG] * len(input_text)
+                        tags = [GeceData.NONE_TAG] * len(input_text)
                         for mark in markings:
                             mark_type = mark['error_type']
                             for idx in mark['error_indices']:
@@ -136,3 +133,54 @@ class Bea2019Data(lit_dataset.Dataset):
                 'target_text': lit_types.TextSegment(),
                 'input_tokens': lit_types.Tokens(required=False),
                 'gece_tags': lit_types.SequenceTags(align='input_tokens', required=False)}
+
+
+class GeceProdigyData(GecData):
+
+    def __init__(self, path, gece_tags=False):
+        with jsonlines.open(path) as lines:
+            self._examples = []
+            self.unprocessable = []
+            for jsonline in lines:
+                input_text = jsonline['original']
+                result = {'input_text': input_text, 'input_tokens': input_text.split(),
+                          'target_text': jsonline['_corrected_form']}
+                unprocessable = False
+                if gece_tags and 'relations' in jsonline:
+                    try:
+                        markings = []
+                        tags = [self.NONE_TAG] * len(input_text)
+                        for relation in jsonline['relations']:
+                            mark_type = relation['label']
+
+                            # head is cause, child is error
+                            cause_indices = list(range(relation['head_span']['token_start'],
+                                                       relation['head_span']['token_end'] + 1))
+                            error_indices = list(range(relation['child_span']['token_start'],
+                                                       relation['child_span']['token_end'] + 1))
+
+                            markings.append({
+                                'error_type': mark_type,
+                                'cause_indices': cause_indices,
+                                'error_indices': error_indices
+                            })
+
+                            for idx in error_indices:
+                                tags[idx] = '{}:ERR'.format(mark_type)
+
+                            for idx in cause_indices:
+                                tags[idx] = '{}:SRC'.format(mark_type)
+                        result['gece_tags'] = tags
+                        result['markings'] = markings  # not in the output spec because only used in attention analysis (not LIT)
+
+                    except Exception as ex:
+                        self.unprocessable.append(ex)
+                        unprocessable = True
+
+                if not unprocessable:
+                    self.examples.append(result)
+
+        if len(self.unprocessable) > 0:
+            print('SKipped loading {} unprocessable examples'.format(len(self.unprocessable)))
+
+

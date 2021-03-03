@@ -1,4 +1,4 @@
-from lit_classes import Bea2019Data, GectorBertModel, \
+from lit_classes import GeceProdigyData, GectorBertModel, \
     GECE_ERROR_TYPES  # reuse the LIT classes as they're already packaged for analysis
 
 from scipy.stats import pearsonr
@@ -130,7 +130,7 @@ def attention_analysis(model: lit_model.Model, data: lit_dataset.Dataset, attent
 
 if __name__ == '__main__':
     model = GectorBertModel('bert_0_gector.th')
-    data = Bea2019Data('data/test.jsonl', gece_tags=True)
+    data = GeceProdigyData('test_sample.jsonl', gece_tags=True)
     pearson, regression, argmax = attention_analysis(model, data, model.ATTENTION_HEADS, model.ATTENTION_LAYERS,
                                                      model.MAX_LEN)
     print('debug')
